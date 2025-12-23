@@ -1,22 +1,30 @@
 // ============================================
-// api/generate.js - OPTIMIZED FOR GEMINI 2.0 FLASH
-// Better conversation quality + Complete responses
+// api/generate.js - OPTIMIZED FOR GROQ LLaMA
+// Ultra-low latency / Full responses
 // ============================================
 
 export default async function handler(req, res) {
+  // --------------------
   // CORS
+  // --------------------
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
 
+  // --------------------
+  // HEALTH CHECK
+  // --------------------
   if (req.method === "GET") {
     return res.json({
       ok: true,
-      model: process.env.GEMINI_MODEL || "gemini-2.0-flash-exp",
+      provider: "groq",
+      model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
       endpoint: "generate",
-      status: "ready"
+      status: "ready",
     });
   }
 
@@ -24,117 +32,118 @@ export default async function handler(req, res) {
     return res.status(405).json({ ok: false, error: "Use POST" });
   }
 
-  // Extract params
+  // --------------------
+  // INPUT
+  // --------------------
   const prompt = req.body?.prompt;
-  if (!prompt) {
+  if (!prompt || typeof prompt !== "string") {
     return res.status(400).json({ ok: false, error: "Missing prompt" });
   }
 
-  const temperature = req.body?.temperature ?? 0.85;
+  const temperature = req.body?.temperature ?? 0.8;
   const maxTokens = req.body?.max_tokens ?? 400;
 
-  console.log(`📥 Request: ${prompt.substring(0, 50)}...`);
+  console.log(`📥 Prompt: ${prompt.substring(0, 60)}...`);
   console.log(`⚙️ temp=${temperature}, max=${maxTokens}`);
 
-  // API Key
-  const GEMINI_KEY = process.env.GEMINI_API_KEY;
-  // USE GEMINI 2.0 FLASH - MUCH BETTER!
-  const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
+  // --------------------
+  // ENV
+  // --------------------
+  const GROQ_API_KEY = process.env.GROQ_API_KEY;
+  const GROQ_MODEL =
+    process.env.GROQ_MODEL || "llama-3.1-8b-instant";
 
-  if (!GEMINI_KEY) {
-    console.error("❌ No GEMINI_API_KEY");
+  if (!GROQ_API_KEY) {
+    console.error("❌ Missing GROQ_API_KEY");
     return res.status(500).json({ ok: false, error: "API key missing" });
   }
 
-  // API Call
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
-
+  // --------------------
+  // GROQ API CALL
+  // --------------------
   try {
-    console.log(`🚀 Calling ${GEMINI_MODEL}...`);
+    console.log(`🚀 Calling Groq (${GROQ_MODEL})`);
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{ text: prompt }],
-          role: "user"
-        }],
-        generationConfig: {
-          temperature: temperature,
-          maxOutputTokens: maxTokens,
-          topP: 0.95,
-          topK: 40,
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${GROQ_API_KEY}`,
         },
-        safetySettings: [
-          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
-          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" }
-        ]
-      })
-    });
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          temperature: temperature,
+          max_tokens: maxTokens,
+          top_p: 0.95,
+          stream: false,
+        }),
+      }
+    );
 
     if (!response.ok) {
-      const error = await response.text();
-      console.error(`❌ API error ${response.status}:`, error);
+      const errText = await response.text();
+      console.error(`❌ Groq error ${response.status}:`, errText);
       return res.status(response.status).json({
         ok: false,
-        error: `Gemini error: ${response.status}`
+        error: `Groq API error ${response.status}`,
       });
     }
 
     const data = await response.json();
-    const candidates = data?.candidates;
+    const choice = data?.choices?.[0];
 
-    if (!candidates || candidates.length === 0) {
-      console.error("❌ No candidates");
-      return res.status(500).json({ ok: false, error: "No response" });
-    }
-
-    const reply = candidates[0]?.content?.parts?.[0]?.text || "";
-    const finishReason = candidates[0]?.finishReason;
-
-    if (!reply || reply.trim().length === 0) {
-      console.error("❌ Empty reply");
-      return res.status(500).json({ ok: false, error: "Empty response" });
-    }
-
-    // Check if blocked
-    if (finishReason === "SAFETY") {
-      console.warn("⚠️ Safety block");
-      return res.status(400).json({
+    if (!choice || !choice.message?.content) {
+      console.error("❌ Empty Groq response");
+      return res.status(500).json({
         ok: false,
-        error: "Response blocked by safety filters"
+        error: "Empty response from model",
       });
     }
 
-    // Validate response length
-    const wordCount = reply.trim().split(/\s+/).length;
+    const reply = choice.message.content.trim();
+    const finishReason = choice.finish_reason;
+
+    if (!reply) {
+      console.error("❌ Blank reply text");
+      return res.status(500).json({
+        ok: false,
+        error: "Blank response",
+      });
+    }
+
+    // --------------------
+    // METRICS
+    // --------------------
+    const wordCount = reply.split(/\s+/).length;
+
     console.log(`✅ Response: ${wordCount} words`);
     console.log(`📝 "${reply.substring(0, 80)}..."`);
 
-    if (wordCount < 20) {
-      console.warn(`⚠️ SHORT: ${wordCount} words - retrying might help`);
-    }
-
     return res.json({
       ok: true,
-      reply: reply.trim(),
+      reply,
       metadata: {
-        model: GEMINI_MODEL,
-        wordCount: wordCount,
-        finishReason: finishReason,
-        tokensUsed: data.usageMetadata?.totalTokenCount || 0
-      }
+        model: GROQ_MODEL,
+        wordCount,
+        finishReason,
+        tokensUsed: data.usage?.total_tokens || 0,
+      },
     });
 
-  } catch (error) {
-    console.error("❌ Handler error:", error.message);
+  } catch (err) {
+    console.error("❌ Handler exception:", err.message);
     return res.status(500).json({
       ok: false,
-      error: "Internal error",
-      message: error.message
+      error: "Internal server error",
+      message: err.message,
     });
   }
 }
