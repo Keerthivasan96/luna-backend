@@ -20,15 +20,18 @@ const PORT = Number(process.env.PORT || 4000);
 app.use(
   cors({
     origin: [
+      "https://luna-frontend-cy6v.vercel.app", // ✅ REAL FRONTEND
+      "https://luna-frontend.vercel.app",
       "https://public-speaking-for-kids-v21.vercel.app",
       "https://public-speaking-for-kids2.vercel.app",
-      "https://luna-frontend.vercel.app",
       "http://localhost:5173",
       "http://localhost:3000",
     ],
+    methods: ["GET", "POST", "OPTIONS"],
     credentials: true,
   })
 );
+app.options("*", cors());
 
 // Explicit preflight handlers (unchanged)
 app.options("/api/chat", cors());
