@@ -1,7 +1,7 @@
 /**
- * server.js - GROQ VERSION (FEATURE-PARITY)
+ * server.js — FINAL STABLE VERSION
  * Express backend for Luna / Kids3D Teacher
- * Gemini & OpenAI swapped → Groq (LLaMA)
+ * Groq (LLaMA) backend — browser + Vercel compatible
  */
 
 import express from "express";
@@ -14,50 +14,46 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
 
-// ============================
-// ✅ CORS CONFIG (UNCHANGED)
-// ============================
+// =======================================================
+// ✅ CORS — SIMPLE + BULLETPROOF (DO NOT OVERTHINK)
+// =======================================================
+// IMPORTANT:
+// - Browser preflight MUST succeed
+// - Do NOT restrict origins while stabilizing
+// - Old backend effectively behaved like this
+
 app.use(
   cors({
-    origin: [
-      "https://luna-frontend-cy6v.vercel.app", // ✅ REAL FRONTEND
-      "https://luna-frontend.vercel.app",
-      "https://public-speaking-for-kids-v21.vercel.app",
-      "https://public-speaking-for-kids2.vercel.app",
-      "http://localhost:5173",
-      "http://localhost:3000",
-    ],
+    origin: "*",
     methods: ["GET", "POST", "OPTIONS"],
-    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+// 🔥 REQUIRED for browser preflight on Vercel
 app.options("*", cors());
 
-// Explicit preflight handlers (unchanged)
-app.options("/api/chat", cors());
-app.options("/api/generate", cors());
-app.options("/api/tts", cors());
-
+// =======================================================
+// BODY PARSERS
+// =======================================================
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// ============================
-// ✅ HEALTH CHECK (UPDATED)
-// ============================
+// =======================================================
+// HEALTH CHECK (ROOT)
+// =======================================================
 app.get("/", (req, res) => {
   res.json({
     ok: true,
-    message: "Luna / Kids3D Teacher backend is running",
-    providers: {
-      groq: !!process.env.GROQ_API_KEY,
-    },
+    message: "Luna backend is running",
+    provider: "groq",
+    model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
   });
 });
 
-// ============================
-// ✅ RESPONSE TEXT EXTRACTOR
-// (kept for parity & safety)
-// ============================
+// =======================================================
+// SAFE RESPONSE TEXT EXTRACTOR
+// =======================================================
 function extractTextFromResponse(obj) {
   try {
     const msg = obj?.choices?.[0]?.message?.content;
@@ -69,24 +65,20 @@ function extractTextFromResponse(obj) {
     if (txt?.trim()) return txt.trim();
   } catch {}
 
-  try {
-    return JSON.stringify(obj);
-  } catch {
-    return String(obj);
-  }
+  return "";
 }
 
-// ============================
-// ✅ SHARED HANDLER
+// =======================================================
+// SHARED CHAT HANDLER
 // (/api/chat + /api/generate)
-// ============================
+// =======================================================
 async function handleChatRequest(req, res) {
   const prompt = req.body?.prompt ?? req.body?.text;
 
   if (!prompt || typeof prompt !== "string") {
     return res.status(400).json({
       ok: false,
-      error: "Missing 'prompt' in request body.",
+      error: "Missing 'prompt' in request body",
     });
   }
 
@@ -96,8 +88,6 @@ async function handleChatRequest(req, res) {
       error: "GROQ_API_KEY not configured",
     });
   }
-
-  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
 
   try {
     const response = await fetch(
@@ -109,32 +99,42 @@ async function handleChatRequest(req, res) {
           Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
         },
         body: JSON.stringify({
-          model,
+          model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.85,
-          max_tokens: 900, // 🔥 parity with Gemini config
+          max_tokens: 900,
           top_p: 0.95,
         }),
       }
     );
 
-    const json = await response.json().catch(() => null);
-    console.log("📥 GROQ RAW RESPONSE:", JSON.stringify(json, null, 2));
+    const data = await response.json();
 
     if (!response.ok) {
       return res.status(502).json({
         ok: false,
         error: "Groq API error",
         status: response.status,
-        body: json,
+        body: data,
       });
     }
 
-    const reply = extractTextFromResponse(json);
-    return res.json({ ok: true, reply: String(reply) });
+    const reply = extractTextFromResponse(data);
+
+    if (!reply) {
+      return res.status(500).json({
+        ok: false,
+        error: "Empty response from model",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      reply,
+    });
 
   } catch (err) {
-    console.error("Error calling Groq:", err);
+    console.error("Groq request failed:", err);
     return res.status(500).json({
       ok: false,
       error: "Server error calling Groq",
@@ -143,46 +143,35 @@ async function handleChatRequest(req, res) {
   }
 }
 
-// ============================
-// ✅ ROUTES (UNCHANGED)
-// ============================
+// =======================================================
+// ROUTES
+// =======================================================
 app.post("/api/chat", handleChatRequest);
 app.post("/api/generate", handleChatRequest);
 
-// ============================
-// ✅ TTS ENDPOINT (UNCHANGED)
-// ============================
-app.post("/api/tts", async (req, res) => {
-  const text = req.body?.text;
-  if (!text) {
-    return res.status(400).json({
-      ok: false,
-      error: "Missing 'text' in request body.",
-    });
-  }
-
-  return res.status(501).json({
+// =======================================================
+// TTS STUB (UNCHANGED)
+// =======================================================
+app.post("/api/tts", (req, res) => {
+  res.status(501).json({
     ok: false,
-    error: "TTS not implemented yet.",
-    suggestion:
-      "Use frontend speechSynthesis.speak() for MVP.",
+    error: "TTS not implemented on backend",
+    suggestion: "Use browser speechSynthesis",
   });
 });
 
-// ============================
-// ✅ STATIC AUDIO (UNCHANGED)
-// ============================
+// =======================================================
+// STATIC FILES (OPTIONAL)
+// =======================================================
 app.use("/audio", express.static(path.join(process.cwd(), "audio")));
 
-// ============================
-// ✅ VERCEL + LOCAL COMPAT
-// ============================
+// =======================================================
+// EXPORT FOR VERCEL + LOCAL DEV
+// =======================================================
 export default app;
 
 if (process.env.VERCEL === undefined) {
   app.listen(PORT, () => {
-    console.log(
-      `Server listening on http://localhost:${PORT}`
-    );
+    console.log(`Server running at http://localhost:${PORT}`);
   });
 }
