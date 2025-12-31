@@ -106,8 +106,8 @@ async function handleChatRequest(req, res) {
         body: JSON.stringify({
           model,
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.85,
-          max_tokens: 900, // 🔥 kept same intent as Gemini
+          temperature: 0.75,
+          max_tokens: 150, // 🔥 Reduced to enforce brevity
           top_p: 0.95,
         }),
       }
